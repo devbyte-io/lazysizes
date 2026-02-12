@@ -141,22 +141,69 @@ function l(window, document, Date) { // Pass in the window Date function also fo
 	 * @param noCancelable { boolean }
 	 * @returns { CustomEvent }
 	 */
-	var triggerEvent = function(elem, name, detail, noBubbles, noCancelable){
-		var event = document.createEvent('Event');
+	function triggerEvent(elem, name, detail, noBubbles, noCancelable) {
+		var event = null;
+		var bubbles = !noBubbles;
+		var cancelable = !noCancelable;
 
-		if(!detail){
+		// Ensure detail is always an object when lazysizes expects to read .detail
+		if (detail == null) {
 			detail = {};
 		}
 
-		detail.instance = lazysizes;
+		// 1) Modern path: CustomEvent (preferred when we need .detail)
+		try {
+			if (typeof window.CustomEvent === 'function') {
+				event = new CustomEvent(name, {
+					detail: detail,
+					bubbles: bubbles,
+					cancelable: cancelable
+				});
+			}
+		} catch (e) {
+			event = null;
+		}
 
-		event.initEvent(name, !noBubbles, !noCancelable);
+		// 2) Modern fallback: Event (no detail support natively), attach detail manually
+		if (!event) {
+			try {
+				if (typeof window.Event === 'function') {
+					event = new Event(name, { bubbles: bubbles, cancelable: cancelable });
+					try { event.detail = detail; } catch (_) {}
+				}
+			} catch (e2) {
+				event = null;
+			}
+		}
 
-		event.detail = detail;
+		// 3) Legacy fallback: createEvent, but *never* use document.createEvent directly
+		// (it may be monkey-patched). Use the prototype method with an explicit receiver.
+		if (!event) {
+			try {
+				var nativeCreateEvent = Document && Document.prototype && Document.prototype.createEvent;
+				if (typeof nativeCreateEvent === 'function') {
+					event = nativeCreateEvent.call(document, 'Event');
+					event.initEvent(name, bubbles, cancelable);
+					try { event.detail = detail; } catch (_) {}
+				}
+			} catch (e3) {
+				event = null;
+			}
+		}
 
-		elem.dispatchEvent(event);
-		return event;
-	};
+		// 4) Dispatch, but never let dispatch failures break lazysizes.
+		// Return an object with .detail at minimum so callers won't crash.
+		if (event) {
+			try {
+				elem.dispatchEvent(event);
+			} catch (e4) {
+				// swallow
+			}
+			return event;
+		}
+
+		return { detail: detail };
+	}
 
 	var updatePolyfill = function (el, full){
 		var polyfill;
